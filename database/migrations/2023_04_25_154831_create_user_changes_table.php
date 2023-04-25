@@ -15,6 +15,8 @@ class CreateUserChangesTable extends Migration
     {
         Schema::create('user_changes', function (Blueprint $table) {
             $table->bigIncrements('id');
+            $table->string('user_id');
+            $table->string('change_id');
             $table->timestamps();
         });
     }

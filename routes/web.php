@@ -21,6 +21,8 @@
     // return view('emergency');
 // });
 
+
+Route::get("/getuser_data", "HomeController@getuser_data");
 Route::get("viralsample/patient_verification/{upi_no}", "ViralpatientController@patient_verify");
 Route::get("patient_cr/{upi_no}", "ViralpatientController@patient_verify");
 

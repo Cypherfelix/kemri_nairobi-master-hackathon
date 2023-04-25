@@ -9,6 +9,8 @@ use Carbon\Carbon;
 use App\CancerSample;
 use App\CancerSampleView;
 use App\CovidSample;
+use Illuminate\Support\Facades\Auth;
+use Alert;
 use App\Sample;
 use App\SampleView;
 use App\Viralsample;
@@ -54,6 +56,8 @@ class HomeController extends Controller
             $chart = $this->getHomeGraph();
             $week_chart = $this->getHomeGraph('week');
             $month_chart = $this->getHomeGraph('month');
+            $me=Auth::user()->id;
+            alert()->success('hey!!!',$me)->persistent();
 
             return view('home.home', ['chart'=>$chart, 'week_chart' => $week_chart, 'month_chart' => $month_chart])->with('pageTitle', 'Home');
         } else if(auth()->user()->user_type_id == 2) {
@@ -149,6 +153,16 @@ class HomeController extends Controller
             $count++;
         }
         return $chart;
+    }
+
+    function getuser_data()
+    {
+        if (Auth::check()) {
+            $data = Auth::user();
+            dd($data);
+        } else {
+            return 'error';
+        }
     }
 
     public function overdue($level = 'testing')

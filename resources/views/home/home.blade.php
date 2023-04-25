@@ -11,6 +11,8 @@
     	margin-top: 4px;
 	}
 </style>
+@include('sweetalert::alert')
+
 <div class="p-lg">
 	<div class="content animate-panel" data-child="hpanel" style="background-color: white;">
 	<!-- <div class="animate-panel"  data-child="hpanel" data-effect="fadeInDown"> -->

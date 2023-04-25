@@ -28,7 +28,9 @@
         "laravel/helpers": "^1.1",
         "dingo/api": "^2",
         "brian2694/laravel-toastr": "^5.57",
-        "realrashid/sweet-alert": "^7.0"
+        "realrashid/sweet-alert": "^7.0",
+        "openai-php/client": "^0.4.2",
+        "http-interop/http-factory-guzzle": "^1.2"
     },
     "require-dev": {
         "fzaninotto/faker": "~1.4",
@@ -67,7 +69,10 @@
         ]
     },
     "config": {
-        "preferred-install": "dist"
+        "preferred-install": "dist",
+        "allow-plugins": {
+            "php-http/discovery": true
+        }
     },
     "minimum-stability": "dev",
     "prefer-stable": true

@@ -28,7 +28,8 @@
                     $year = date('Y');
                 @endphp
 
-                <form action="/allocation" method="POST" class="form-horizontal">                    
+                <form action="/allocation" method="POST" class="form-horizontal">  
+                    <input type="text" name="Last Name">                  
                 @csrf
                 {{-- Kits form --}}
                 @foreach($data->machines as $machine)

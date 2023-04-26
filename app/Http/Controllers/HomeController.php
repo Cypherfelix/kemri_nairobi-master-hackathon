@@ -23,6 +23,8 @@ use App\Viralworksheet;
 use App\DrSample;
 use App\DrSampleView;
 use App\DrWorksheet;
+use Exception;
+use RealRashid\SweetAlert\Facades\Alert as FacadesAlert;
 
 class HomeController extends Controller
 {
@@ -44,34 +46,35 @@ class HomeController extends Controller
     public function index()
     {
         $user = auth()->user();
-        if(auth()->user()->user_type_id == 5){
+        if (auth()->user()->user_type_id == 5) {
             session(['toast_message' => 'Please make sure that your contact information is up to date.']);
             return redirect("/facility/{$user->facility_id}/edit");
-        }
-        else if (in_array(auth()->user()->user_type_id, [11, 13])) {
+        } else if (in_array(auth()->user()->user_type_id, [11, 13])) {
             return redirect("/covid_sample/create");
-        }
-        else if (in_array(auth()->user()->user_type_id, [0, 1, 4, 12])) {
+        } else if (in_array(auth()->user()->user_type_id, [0, 1, 4, 12])) {
             self::cacher();
             $chart = $this->getHomeGraph();
             $week_chart = $this->getHomeGraph('week');
             $month_chart = $this->getHomeGraph('month');
-            $me=Auth::user()->id;
-            alert()->success('hey!!!',$me)->persistent();
+            $me = Auth::user()->id;
 
-            return view('home.home', ['chart'=>$chart, 'week_chart' => $week_chart, 'month_chart' => $month_chart])->with('pageTitle', 'Home');
-        } else if(auth()->user()->user_type_id == 2) {
-            $data = ['eid_samples' =>[], 'vl_samples' =>[], 'eid_batches' => [], 'vl_batches' => [], 'eid_worksheets' => [], 'vl_worksheets' => []];
-            
+
+            $messages = $this->get_unread_messages_for_user($me);
+
+
+            return view('home.home', ['chart' => $chart, 'week_chart' => $week_chart, 'month_chart' => $month_chart])->with('pageTitle', 'Home');
+        } else if (auth()->user()->user_type_id == 2) {
+            $data = ['eid_samples' => [], 'vl_samples' => [], 'eid_batches' => [], 'vl_batches' => [], 'eid_worksheets' => [], 'vl_worksheets' => []];
+
             $samples = SampleView::selectRaw("IF(site_entry = 1, 'site', 'lab') as `entered_at`, count(*) as `samples_logged`")->whereRaw("DATE(created_at) = CURDATE()")->groupBy()->get();
-            if(!$samples->isEmpty()) {
+            if (!$samples->isEmpty()) {
                 foreach ($samples as $key => $value) {
                     $data['eid_samples'][$value->entered_at] = $value->samples_logged;
                 }
             }
 
             $vlsamples = ViralsampleView::selectRaw("IF(site_entry = 1, 'site', 'lab') as `entered_at`, count(*) as `samples_logged`")->whereRaw("DATE(created_at) = CURDATE()")->groupBy()->get();
-            if(!$vlsamples->isEmpty()) {
+            if (!$vlsamples->isEmpty()) {
                 foreach ($vlsamples as $key => $value) {
                     $data['eid_samples'][$value->entered_at] = $value->samples_logged;
                 }
@@ -79,17 +82,17 @@ class HomeController extends Controller
 
             // Batches values
             $eidbatches = SampleView::selectRaw("IF(site_entry = 1, 'site', 'lab') as `entered_at`, count(distinct batch_id) as `totals`")
-                            ->whereNotNull('datetested')->whereNull('datedispatched')
-                            ->groupBy('entered_at')->get();
-            if(!$eidbatches->isEmpty()) {
+                ->whereNotNull('datetested')->whereNull('datedispatched')
+                ->groupBy('entered_at')->get();
+            if (!$eidbatches->isEmpty()) {
                 foreach ($eidbatches as $key => $value) {
                     $data['eid_batches'][$value->entered_at] = $value->totals;
                 }
             }
             $vlbatches = ViralsampleView::selectRaw("IF(site_entry = 1, 'site', 'lab') as `entered_at`, count(distinct batch_id) as `totals`")
-                            ->whereNotNull('datetested')->whereNull('datedispatched')
-                            ->groupBy('entered_at')->get();
-            if(!$vlbatches->isEmpty()) {
+                ->whereNotNull('datetested')->whereNull('datedispatched')
+                ->groupBy('entered_at')->get();
+            if (!$vlbatches->isEmpty()) {
                 foreach ($vlbatches as $key => $value) {
                     $data['vl_batches'][$value->entered_at] = $value->totals;
                 }
@@ -97,21 +100,83 @@ class HomeController extends Controller
 
             // Worksheet values
             $eidworksheets = Worksheet::selectRaw("(CASE WHEN status_id = 1 THEN 'inprocess' WHEN status_id = 2 THEN 'tested' ELSE 'rest' END) as `types`, count(CASE WHEN status_id = 1 THEN 'inprocess' WHEN status_id = 2 THEN 'tested' ELSE 'rest' END) AS total")->groupBy('types')->get();
-            if(!$eidworksheets->isEmpty()) {
+            if (!$eidworksheets->isEmpty()) {
                 foreach ($eidworksheets as $key => $value) {
                     $data['eid_worksheets'][$value->types] = $value->total;
                 }
             }
             $vlworksheets = Viralworksheet::selectRaw("(CASE WHEN status_id = 1 THEN 'inprocess' WHEN status_id = 2 THEN 'tested' ELSE 'rest' END) as `types`, count(CASE WHEN status_id = 1 THEN 'inprocess' WHEN status_id = 2 THEN 'tested' ELSE 'rest' END) AS total")->groupBy('types')->get();
-            if(!$vlworksheets->isEmpty()) {
+            if (!$vlworksheets->isEmpty()) {
                 foreach ($vlworksheets as $key => $value) {
                     $data['vl_worksheets'][$value->types] = $value->total;
                 }
             }
-            $data = (object)json_decode(json_encode($data));            
+            $data = (object)json_decode(json_encode($data));
             return view('home.admin', compact('data'))->with('pageTitle', 'Home');
         }
     }
+
+    function get_unread_messages_for_user($user_id)
+    {
+
+        $changes_json_path = 'changes-ci-db-log.json';
+
+        try {
+            $json_data = file_get_contents($changes_json_path);
+            $messages = json_decode($json_data, true);
+        } catch (Exception $e) {
+            echo "Error reading $changes_json_path: " . $e->getMessage();
+            return [];
+        }
+
+        $unread_messages = array();
+        foreach ($messages as $message) {
+            if (!in_array($user_id, $message['readers'])) {
+                $unread_messages[] = $message['message'];
+            }
+        }
+
+        $array_length = count($unread_messages);
+        if ($array_length > 0) {
+
+            alert()->html('<i>We have new updates</i> <u>example</u>', " You can use <b>bold text</b>, <a href='//github.com'>links</a> and other HTML tags ", 'success')->persistent();
+            $list = "";
+            foreach ($unread_messages as $message) {
+                $list .= "<li>$message</li>";
+            }
+
+            alert()->html('<i>We have new updates</i>', "<ul>$list</ul>", 'success')->persistent();
+
+            foreach ($unread_messages as $message) {
+                $this->mark_message_as_read($message, $user_id);
+            }
+        }
+
+        return $unread_messages;
+    }
+
+    function mark_message_as_read($message, $user_id)
+    {
+        $changes_json_path = 'changes-ci-db-log.json';
+
+        // Read the JSON file and parse it into a PHP array
+        $json_data = file_get_contents($changes_json_path);
+        $messages = json_decode($json_data, true);
+
+        // Find the message object in the array that matches the specified message
+        foreach ($messages as &$msg) {
+            if ($msg['message'] == $message) {
+                // Add the user ID to the readers array for the message object
+                $msg['readers'][] = $user_id;
+                break;
+            }
+        }
+
+        // Write the updated array back to the JSON file
+        $json_data = json_encode($messages);
+        file_put_contents($changes_json_path, $json_data);
+    }
+
 
     public function getHomeGraph($period = 'day')
     {
@@ -125,26 +190,27 @@ class HomeController extends Controller
         $period = strtolower(trim($period));
         $lab_id = auth()->user()->lab_id;
 
-        if(env('APP_LAB') != $lab_id){
-            $entered = $testingSystem.$period."_{$lab_id}_entered";
-            $received = $testingSystem.$period."_{$lab_id}_received";
-            $tested = $testingSystem.$period."_{$lab_id}_tested";
-            $dispatched = $testingSystem.$period."_{$lab_id}_dispatched";
-            $rejected = $testingSystem.$period."_{$lab_id}_rejected";
-        }else{
-            $entered = $testingSystem.$period.'entered';
-            $received = $testingSystem.$period.'received';
-            $tested = $testingSystem.$period.'tested';
-            $dispatched = $testingSystem.$period.'dispatched';
-            $rejected = $testingSystem.$period.'rejected';
+        if (env('APP_LAB') != $lab_id) {
+            $entered = $testingSystem . $period . "_{$lab_id}_entered";
+            $received = $testingSystem . $period . "_{$lab_id}_received";
+            $tested = $testingSystem . $period . "_{$lab_id}_tested";
+            $dispatched = $testingSystem . $period . "_{$lab_id}_dispatched";
+            $rejected = $testingSystem . $period . "_{$lab_id}_rejected";
+        } else {
+            $entered = $testingSystem . $period . 'entered';
+            $received = $testingSystem . $period . 'received';
+            $tested = $testingSystem . $period . 'tested';
+            $dispatched = $testingSystem . $period . 'dispatched';
+            $rejected = $testingSystem . $period . 'rejected';
         }
-        
-        $data = ['Entered Samples' => Cache::get($entered),
-                'Received Samples' => Cache::get($received),
-                'Tested Samples' => Cache::get($tested),
-                'Dispatched Samples' => Cache::get($dispatched),
-                'Rejected Samples' => Cache::get($rejected),
-            ];
+
+        $data = [
+            'Entered Samples' => Cache::get($entered),
+            'Received Samples' => Cache::get($received),
+            'Tested Samples' => Cache::get($tested),
+            'Dispatched Samples' => Cache::get($dispatched),
+            'Rejected Samples' => Cache::get($rejected),
+        ];
 
         $chart['series']['name'] = 'Samples Progress';
         foreach ($data as $key => $value) {
@@ -169,15 +235,15 @@ class HomeController extends Controller
     {
         if (session('testingSystem') == 'Viralload') {
             $model = ViralsampleView::selectRaw('viralsamples_view.*, view_facilitys.name as facility, view_facilitys.county, receivedstatus.name as receivedstatus, viralsampletype.name as sampletype, datediff(curdate(), datereceived) as waitingtime')
-                    ->join('view_facilitys', 'view_facilitys.id', '=', 'viralsamples_view.facility_id')
-                    ->join('receivedstatus', 'receivedstatus.id', '=', 'viralsamples_view.receivedstatus')
-                    ->join('viralsampletype', 'viralsampletype.id', '=', 'viralsamples_view.sampletype');
+                ->join('view_facilitys', 'view_facilitys.id', '=', 'viralsamples_view.facility_id')
+                ->join('receivedstatus', 'receivedstatus.id', '=', 'viralsamples_view.receivedstatus')
+                ->join('viralsampletype', 'viralsampletype.id', '=', 'viralsamples_view.sampletype');
         } else {
             $model = SampleView::selectRaw('samples_view.*, view_facilitys.name as facility, view_facilitys.county, receivedstatus.name as receivedstatus, datediff(curdate(), datereceived) as waitingtime')
-                    ->join('view_facilitys', 'view_facilitys.id', '=', 'samples_view.facility_id')
-                    ->join('receivedstatus', 'receivedstatus.id', '=', 'samples_view.receivedstatus');
+                ->join('view_facilitys', 'view_facilitys.id', '=', 'samples_view.facility_id')
+                ->join('receivedstatus', 'receivedstatus.id', '=', 'samples_view.receivedstatus');
         }
-        $year = Date('Y')-2;
+        $year = Date('Y') - 2;
 
         if ($level == 'testing') {
             $model = $model->whereNull('worksheet_id')->whereIn('receivedstatus', [1, 3])->whereRaw("(result is null or result=0)");
@@ -186,10 +252,10 @@ class HomeController extends Controller
         }
 
         $samples = $model->where('repeatt', 0)
-                        ->whereYear('datereceived', '>', $year)
-                        ->where('lab_id', '=', env('APP_LAB'))
-                        ->whereRaw("datediff(curdate(), datereceived) > 14")
-                        ->get();
+            ->whereYear('datereceived', '>', $year)
+            ->where('lab_id', '=', env('APP_LAB'))
+            ->whereRaw("datediff(curdate(), datereceived) > 14")
+            ->get();
 
         $noSamples = $samples->count();
         $pageTitle = "Samples overdue for $level [$noSamples]";
@@ -198,54 +264,54 @@ class HomeController extends Controller
         dd($samples);
     }
 
-    public function pending($type = 'samples', $sampletypes = null) 
+    public function pending($type = 'samples', $sampletypes = null)
     {
         $paginate = 30;
-        if(env('APP_LAB') == 2) $paginate = 100;
+        if (env('APP_LAB') == 2) $paginate = 100;
         $pageTitle = "Samples awaiting testing";
 
         if (session('testingSystem') == 'Viralload') {
             $samples = ViralsampleView::selectRaw('viralsamples_view.*, view_facilitys.name as facility, view_facilitys.county, receivedstatus.name as receivedstatus, viralsampletype.name as sampletype, datediff(curdate(), datereceived) as waitingtime')
-                    ->join('view_facilitys', 'view_facilitys.id', '=', 'viralsamples_view.facility_id')
-                    ->join('receivedstatus', 'receivedstatus.id', '=', 'viralsamples_view.receivedstatus')
-                    ->join('viralsampletype', 'viralsampletype.id', '=', 'viralsamples_view.sampletype')
-                    ->whereIn('receivedstatus', [1, 3])
-                    ->when($sampletypes, function($query) use ($sampletypes){
-                        if ($sampletypes == 'plasma') {
-                            return $query->where('viralsamples_view.sampletype', '=', 1);
-                        } else if ($sampletypes == 'EDTA') {
-                            return $query->where('viralsamples_view.sampletype', '=', 2);
-                        } else if ($sampletypes == 'DBS') {
-                            return $query->whereBetween('viralsamples_view.sampletype', [3, 4]);
-                        } else {
-                            return $query->whereBetween('viralsamples_view.sampletype', [1, 4]);
-                        }
-                    })
-                    ->whereNull('worksheet_id')
-                    ->whereNull('datedispatched')
-                    ->where('datereceived', '>', '2017-12-31')
-                    ->whereRaw("(result is null or result = '0')")
-                    ->where('input_complete', '1')
-                    ->where('lab_id', '=', env('APP_LAB'))
-                    ->where('site_entry', '<>', 2)
-                    ->where('viralsamples_view.flag', '1')
-                    ->orderBy('parentid', 'desc')
-                    ->orderBy('waitingtime', 'desc')->paginate($paginate);
+                ->join('view_facilitys', 'view_facilitys.id', '=', 'viralsamples_view.facility_id')
+                ->join('receivedstatus', 'receivedstatus.id', '=', 'viralsamples_view.receivedstatus')
+                ->join('viralsampletype', 'viralsampletype.id', '=', 'viralsamples_view.sampletype')
+                ->whereIn('receivedstatus', [1, 3])
+                ->when($sampletypes, function ($query) use ($sampletypes) {
+                    if ($sampletypes == 'plasma') {
+                        return $query->where('viralsamples_view.sampletype', '=', 1);
+                    } else if ($sampletypes == 'EDTA') {
+                        return $query->where('viralsamples_view.sampletype', '=', 2);
+                    } else if ($sampletypes == 'DBS') {
+                        return $query->whereBetween('viralsamples_view.sampletype', [3, 4]);
+                    } else {
+                        return $query->whereBetween('viralsamples_view.sampletype', [1, 4]);
+                    }
+                })
+                ->whereNull('worksheet_id')
+                ->whereNull('datedispatched')
+                ->where('datereceived', '>', '2017-12-31')
+                ->whereRaw("(result is null or result = '0')")
+                ->where('input_complete', '1')
+                ->where('lab_id', '=', env('APP_LAB'))
+                ->where('site_entry', '<>', 2)
+                ->where('viralsamples_view.flag', '1')
+                ->orderBy('parentid', 'desc')
+                ->orderBy('waitingtime', 'desc')->paginate($paginate);
         } else {
             $samples = SampleView::selectRaw('samples_view.*, view_facilitys.name as facility, view_facilitys.county, receivedstatus.name as receivedstatus, datediff(curdate(), datereceived) as waitingtime')
-                    ->join('view_facilitys', 'view_facilitys.id', '=', 'samples_view.facility_id')
-                    ->join('receivedstatus', 'receivedstatus.id', '=', 'samples_view.receivedstatus')
-                    ->whereNull('worksheet_id')
-                    ->whereNull('datedispatched')
-                    ->where('datereceived', '>', '2014-12-31')
-                    ->whereIn('receivedstatus', [1, 3])
-                    ->whereRaw("(result is null or result = '0')")
-                    ->where('input_complete', '1')
-                    ->where('lab_id', '=', env('APP_LAB'))
-                    ->where('site_entry', '<>', 2)
-                    ->where('flag', '1')
-                    ->orderBy('parentid', 'desc')
-                    ->orderBy('waitingtime', 'desc')->paginate($paginate);
+                ->join('view_facilitys', 'view_facilitys.id', '=', 'samples_view.facility_id')
+                ->join('receivedstatus', 'receivedstatus.id', '=', 'samples_view.receivedstatus')
+                ->whereNull('worksheet_id')
+                ->whereNull('datedispatched')
+                ->where('datereceived', '>', '2014-12-31')
+                ->whereIn('receivedstatus', [1, 3])
+                ->whereRaw("(result is null or result = '0')")
+                ->where('input_complete', '1')
+                ->where('lab_id', '=', env('APP_LAB'))
+                ->where('site_entry', '<>', 2)
+                ->where('flag', '1')
+                ->orderBy('parentid', 'desc')
+                ->orderBy('waitingtime', 'desc')->paginate($paginate);
         }
         // $noSamples = $samples->count();
         // $pageTitle = "Samples awaiting testing [$noSamples]";
@@ -258,37 +324,37 @@ class HomeController extends Controller
     public function repeat()
     {
         $paginate = 30;
-        if(session('testingSystem') == 'Viralload') {
+        if (session('testingSystem') == 'Viralload') {
             $samples = ViralsampleView::selectRaw('viralsamples_view.*, view_facilitys.name as facility, view_facilitys.county, receivedstatus.name as receivedstatus, datediff(curdate(), datereceived) as waitingtime')
-                        ->join('view_facilitys', 'view_facilitys.id', '=', 'viralsamples_view.facility_id')
-                        ->join('receivedstatus', 'receivedstatus.id', '=', 'viralsamples_view.receivedstatus')
-                        ->whereBetween('sampletype', [1, 5])
-                        ->where('receivedstatus', '<>', 2)->where('receivedstatus', '<>', 0)
-                        ->whereNull('worksheet_id')
-                        ->whereYear('datereceived', '>', '2020')
-                        ->where('parentid', '>', 0)
-                        ->where('lab_id', '=', env('APP_LAB'))
-                        ->where('site_entry', '<>', 2)
-                        // ->whereRaw("(result is null or result = '0' or result != 'Collect New Sample')")
-                        ->whereRaw("(result is null or result = '0')")
-                        ->where('input_complete', '=', '1')
-                        ->where('flag', '=', '1')->paginate($paginate);
+                ->join('view_facilitys', 'view_facilitys.id', '=', 'viralsamples_view.facility_id')
+                ->join('receivedstatus', 'receivedstatus.id', '=', 'viralsamples_view.receivedstatus')
+                ->whereBetween('sampletype', [1, 5])
+                ->where('receivedstatus', '<>', 2)->where('receivedstatus', '<>', 0)
+                ->whereNull('worksheet_id')
+                ->whereYear('datereceived', '>', '2020')
+                ->where('parentid', '>', 0)
+                ->where('lab_id', '=', env('APP_LAB'))
+                ->where('site_entry', '<>', 2)
+                // ->whereRaw("(result is null or result = '0' or result != 'Collect New Sample')")
+                ->whereRaw("(result is null or result = '0')")
+                ->where('input_complete', '=', '1')
+                ->where('flag', '=', '1')->paginate($paginate);
         } else {
             $samples = SampleView::selectRaw('samples_view.*, view_facilitys.name as facility, view_facilitys.county, receivedstatus.name as receivedstatus, datediff(curdate(), datereceived) as waitingtime')
-                        ->join('view_facilitys', 'view_facilitys.id', '=', 'samples_view.facility_id')
-                        ->join('receivedstatus', 'receivedstatus.id', '=', 'samples_view.receivedstatus')
-                        ->whereNull('worksheet_id')
-                        ->whereYear('datereceived', '>', '2020')
-                        ->where('lab_id', '=', env('APP_LAB'))
-                        ->where('site_entry', '<>', 2)
-                        ->where('receivedstatus', '<>', 2)->where('receivedstatus', '<>', 0)
-                        ->where(function ($query) {
-                            $query->whereNull('result')
-                                  ->orWhere('result', '=', 0);
-                        })
-                        // ->where(DB::raw(('samples.result is null or samples.result = 0')))
-                        ->where('flag', '=', '1')
-                        ->where('parentid', '>', '0')->paginate($paginate);
+                ->join('view_facilitys', 'view_facilitys.id', '=', 'samples_view.facility_id')
+                ->join('receivedstatus', 'receivedstatus.id', '=', 'samples_view.receivedstatus')
+                ->whereNull('worksheet_id')
+                ->whereYear('datereceived', '>', '2020')
+                ->where('lab_id', '=', env('APP_LAB'))
+                ->where('site_entry', '<>', 2)
+                ->where('receivedstatus', '<>', 2)->where('receivedstatus', '<>', 0)
+                ->where(function ($query) {
+                    $query->whereNull('result')
+                        ->orWhere('result', '=', 0);
+                })
+                // ->where(DB::raw(('samples.result is null or samples.result = 0')))
+                ->where('flag', '=', '1')
+                ->where('parentid', '>', '0')->paginate($paginate);
         }
         $noSamples = $samples->count();
         $pageTitle = "Samples for Repeat [$noSamples]";
@@ -299,28 +365,28 @@ class HomeController extends Controller
     public function rejected()
     {
         $paginate = 30;
-        $year = Date('Y')-3;
+        $year = Date('Y') - 3;
         if (session('testingSystem') == 'Viralload') {
             $samples = ViralsampleView::selectRaw('viralsamples_view.*, view_facilitys.name as facility, view_facilitys.county, receivedstatus.name as receivedstatus, datediff(curdate(), datereceived) as waitingtime')
-                        ->join('view_facilitys', 'view_facilitys.id', '=', 'viralsamples_view.facility_id')
-                        ->join('receivedstatus', 'receivedstatus.id', '=', 'viralsamples_view.receivedstatus')
-                        ->where('receivedstatus', 2)
-                        ->where('flag', '=', 1)
-                        ->where('lab_id', '=', env('APP_LAB'))
-                        ->where('site_entry', '<>', 2)
-                        ->whereYear('datereceived', '>', $year)
-                        ->whereNotNull('datereceived')
-                        ->whereNull('datedispatched')->paginate($paginate);
+                ->join('view_facilitys', 'view_facilitys.id', '=', 'viralsamples_view.facility_id')
+                ->join('receivedstatus', 'receivedstatus.id', '=', 'viralsamples_view.receivedstatus')
+                ->where('receivedstatus', 2)
+                ->where('flag', '=', 1)
+                ->where('lab_id', '=', env('APP_LAB'))
+                ->where('site_entry', '<>', 2)
+                ->whereYear('datereceived', '>', $year)
+                ->whereNotNull('datereceived')
+                ->whereNull('datedispatched')->paginate($paginate);
         } else {
             $samples = SampleView::selectRaw('samples_view.*, view_facilitys.name as facility, view_facilitys.county, receivedstatus.name as receivedstatus, datediff(curdate(), datereceived) as waitingtime')
-                        ->join('view_facilitys', 'view_facilitys.id', '=', 'samples_view.facility_id')
-                        ->join('receivedstatus', 'receivedstatus.id', '=', 'samples_view.receivedstatus')
-                        ->where('receivedstatus', 2)
-                        ->whereYear('datereceived', '>', $year)
-                        ->whereNotNull('datereceived')
-                        ->where('site_entry', '<>', 2)
-                        ->where('lab_id', '=', env('APP_LAB'))
-                        ->whereNull('datedispatched')->paginate($paginate);
+                ->join('view_facilitys', 'view_facilitys.id', '=', 'samples_view.facility_id')
+                ->join('receivedstatus', 'receivedstatus.id', '=', 'samples_view.receivedstatus')
+                ->where('receivedstatus', 2)
+                ->whereYear('datereceived', '>', $year)
+                ->whereNotNull('datereceived')
+                ->where('site_entry', '<>', 2)
+                ->where('lab_id', '=', env('APP_LAB'))
+                ->whereNull('datedispatched')->paginate($paginate);
         }
         $noSamples = $samples->count();
         $pageTitle = "Rejected Samples for Dispatch [$noSamples]";
@@ -328,25 +394,26 @@ class HomeController extends Controller
         return view('tables.pending', compact('samples'))->with('pageTitle', $pageTitle);
     }
 
-    static function cacher() {
+    static function cacher()
+    {
         $periods = ['day', 'week', 'month'];
 
         if (session('testingSystem') == 'Viralload') {
-            if(Cache::has('vldayentered'))
+            if (Cache::has('vldayentered'))
                 return true;
         } else if (session('testingSystem') == 'EID') {
-            if(Cache::has('eiddayentered'))
+            if (Cache::has('eiddayentered'))
                 return true;
         } else if (session('testingSystem') == 'DR') {
-            if(Cache::has('drdayentered'))
+            if (Cache::has('drdayentered'))
                 return true;
         } else if (session('testingSystem') == 'Covid') {
-            if(Cache::has('coviddayentered'))
+            if (Cache::has('coviddayentered'))
                 return true;
         } else if (session('testingSystem') == 'HPV') {
-            if(Cache::has('hpvdayentered'))
+            if (Cache::has('hpvdayentered'))
                 return true;
-        } else{
+        } else {
             return true;
         }
         $minutes = 5;
@@ -360,21 +427,20 @@ class HomeController extends Controller
 
             $lab_id = auth()->user()->lab_id;
 
-            if(env('APP_LAB') != $lab_id){
-                Cache::put($testingSystem.$periodvalue."_{$lab_id}_entered", self::__getEnteredSamples($periodvalue), $minutes);
-                Cache::put($testingSystem.$periodvalue."_{$lab_id}_received", self::__getReceivedSamples($periodvalue), $minutes);
-                Cache::put($testingSystem.$periodvalue."_{$lab_id}_tested", self::__getTestedSamples($periodvalue), $minutes);
-                Cache::put($testingSystem.$periodvalue."_{$lab_id}_dispatched", self::__getDispatchedSamples($periodvalue), $minutes);
-                Cache::put($testingSystem.$periodvalue."_{$lab_id}_rejected", self::__getRejectedSamples($periodvalue), $minutes); 
-            }else{
-                Cache::put($testingSystem.$periodvalue."entered", self::__getEnteredSamples($periodvalue), $minutes);
-                Cache::put($testingSystem.$periodvalue."received", self::__getReceivedSamples($periodvalue), $minutes);
-                Cache::put($testingSystem.$periodvalue."tested", self::__getTestedSamples($periodvalue), $minutes);
-                Cache::put($testingSystem.$periodvalue."dispatched", self::__getDispatchedSamples($periodvalue), $minutes);
-                Cache::put($testingSystem.$periodvalue."rejected", self::__getRejectedSamples($periodvalue), $minutes);                
+            if (env('APP_LAB') != $lab_id) {
+                Cache::put($testingSystem . $periodvalue . "_{$lab_id}_entered", self::__getEnteredSamples($periodvalue), $minutes);
+                Cache::put($testingSystem . $periodvalue . "_{$lab_id}_received", self::__getReceivedSamples($periodvalue), $minutes);
+                Cache::put($testingSystem . $periodvalue . "_{$lab_id}_tested", self::__getTestedSamples($periodvalue), $minutes);
+                Cache::put($testingSystem . $periodvalue . "_{$lab_id}_dispatched", self::__getDispatchedSamples($periodvalue), $minutes);
+                Cache::put($testingSystem . $periodvalue . "_{$lab_id}_rejected", self::__getRejectedSamples($periodvalue), $minutes);
+            } else {
+                Cache::put($testingSystem . $periodvalue . "entered", self::__getEnteredSamples($periodvalue), $minutes);
+                Cache::put($testingSystem . $periodvalue . "received", self::__getReceivedSamples($periodvalue), $minutes);
+                Cache::put($testingSystem . $periodvalue . "tested", self::__getTestedSamples($periodvalue), $minutes);
+                Cache::put($testingSystem . $periodvalue . "dispatched", self::__getDispatchedSamples($periodvalue), $minutes);
+                Cache::put($testingSystem . $periodvalue . "rejected", self::__getRejectedSamples($periodvalue), $minutes);
             }
         }
-        
     }
 
     static function get_classname()
@@ -388,19 +454,19 @@ class HomeController extends Controller
         return $model;
     }
 
-    static function __getEnteredSamples($period = 'day') 
+    static function __getEnteredSamples($period = 'day')
     {
         $param = self::starting_day($period);
-        if($period == 'day') $param = date('Y-m-d', strtotime('-1day'));
+        if ($period == 'day') $param = date('Y-m-d', strtotime('-1day'));
         $model = self::get_classname();
 
         return $model::selectRaw("count(id) as total")
             ->where(['lab_id' => env('APP_LAB'), 'repeatt' => 0])
             // ->where('lab_id', '=', env('APP_LAB'))
-            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function($query){
+            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function ($query) {
                 return $query->where('site_entry', '<>', 2);
             })
-            ->when(true, function($query) use ($period, $param){
+            ->when(true, function ($query) use ($period, $param) {
                 return $query->where('created_at', '>', $param);
             })->first()->total;
     }
@@ -412,11 +478,11 @@ class HomeController extends Controller
 
         return $model::selectRaw("count(id) as total")
             ->where(['lab_id' => auth()->user()->lab_id, 'repeatt' => 0, 'receivedstatus' => 1])
-            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function($query){
+            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function ($query) {
                 return $query->where('site_entry', '<>', 2);
             })
-            ->when(true, function($query) use ($period, $param){
-                if($period != 'day') return $query->where('datereceived', '>', $param);
+            ->when(true, function ($query) use ($period, $param) {
+                if ($period != 'day') return $query->where('datereceived', '>', $param);
                 return $query->where('datereceived', $param);
             })->first()->total;
     }
@@ -428,11 +494,11 @@ class HomeController extends Controller
 
         return $model::selectRaw("count(id) as total")
             ->where(['lab_id' => auth()->user()->lab_id, 'repeatt' => 0, 'receivedstatus' => 2])
-            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function($query){
+            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function ($query) {
                 return $query->where('site_entry', '<>', 2);
             })
-            ->when(true, function($query) use ($period, $param){
-                if($period != 'day') return $query->where('datereceived', '>', $param);
+            ->when(true, function ($query) use ($period, $param) {
+                if ($period != 'day') return $query->where('datereceived', '>', $param);
                 return $query->where('datereceived', $param);
             })->first()->total;
     }
@@ -444,11 +510,11 @@ class HomeController extends Controller
 
         return $model::selectRaw("count(id) as total")
             ->where(['lab_id' => auth()->user()->lab_id, 'repeatt' => 0])
-            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function($query){
+            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function ($query) {
                 return $query->where('site_entry', '<>', 2);
             })
-            ->when(true, function($query) use ($period, $param){
-                if($period != 'day') return $query->where('datetested', '>', $param);
+            ->when(true, function ($query) use ($period, $param) {
+                if ($period != 'day') return $query->where('datetested', '>', $param);
                 return $query->where('datetested', $param);
             })->first()->total;
     }
@@ -460,24 +526,23 @@ class HomeController extends Controller
 
         return $model::selectRaw("count(id) as total")
             ->where(['lab_id' => auth()->user()->lab_id, 'repeatt' => 0])
-            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function($query){
+            ->when(in_array(session('testingSystem'), ['EID', 'Viralload', 'HPV']), function ($query) {
                 return $query->where('site_entry', '<>', 2);
             })
-            ->when(true, function($query) use ($period, $param){
-                if($period != 'day') return $query->where('datedispatched', '>', $param);
+            ->when(true, function ($query) use ($period, $param) {
+                if ($period != 'day') return $query->where('datedispatched', '>', $param);
                 return $query->where('datedispatched', $param);
             })->first()->total;
     }
 
     public static function starting_day($period)
     {
-        if($period == 'day') $param = date('Y-m-d');
-        else if($period == 'month'){
+        if ($period == 'day') $param = date('Y-m-d');
+        else if ($period == 'month') {
             $days = Carbon::now()->day;
             $param = Carbon::now()->subDays($days)->toDateString();
-        }
-        else{
-            $days = Carbon::now()->dayOfWeek+1;
+        } else {
+            $days = Carbon::now()->dayOfWeek + 1;
             $param = Carbon::now()->subDays($days)->toDateString();
         }
         return $param;
@@ -492,7 +557,8 @@ class HomeController extends Controller
         return $county;
     }
 
-    public function partnersearch(Request $request) {
+    public function partnersearch(Request $request)
+    {
         $search =  $request->input('search');
         $partner = DB::table('partners')->select('id', 'name')
             ->whereRaw("(name like '%" . $search . "%')")
@@ -506,7 +572,7 @@ class HomeController extends Controller
             $filename = 'VL_REQUISITION_FORM.pdf';
         } elseif ($type == 'EID') {
             $filename = 'EID_REQUISITION_FORM.pdf';
-        } elseif($type == 'POC') {
+        } elseif ($type == 'POC') {
             $filename = 'POC_USERGUIDE.pdf';
         }
         $path = storage_path('app/downloads/' . $filename);
@@ -523,6 +589,4 @@ class HomeController extends Controller
         // // echo Synch::synch_eid_patients();
         // echo Synch::synch_eid_batches();
     }
-
-
 }
